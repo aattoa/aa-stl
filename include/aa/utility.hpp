@@ -51,4 +51,7 @@ namespace aa {
         = std::is_nothrow_move_constructible_v<T>
        && (!std::is_move_assignable_v<T> || std::is_nothrow_move_assignable_v<T>);
 
+    template <class T, class U>
+    using Qualified_like = decltype(std::forward_like<T>(std::declval<U&>()));
+
 } // namespace aa

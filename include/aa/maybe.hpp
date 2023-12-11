@@ -16,11 +16,11 @@ namespace aa {
         }
     };
 
-    template <class T>
+    template <class Config>
     concept maybe_config = requires(bool const has_value) {
         // clang-format off
-        { T::validate_value(has_value) } -> std::same_as<void>;
-        { T::validate_deref(has_value) } -> std::same_as<void>;
+        { Config::validate_value(has_value) } -> std::same_as<void>;
+        { Config::validate_deref(has_value) } -> std::same_as<void>;
         // clang-format on
     };
 
@@ -61,7 +61,7 @@ namespace aa {
         static constexpr bool nothrow_value = noexcept(Config::validate_value(bool {}));
         static constexpr bool nothrow_deref = noexcept(Config::validate_deref(bool {}));
     public:
-        constexpr Maybe(Nothing = nothing) noexcept {}
+        constexpr Maybe(Nothing = nothing) noexcept {} // NOLINT: implicit
 
         template <class... Args>
             requires std::is_constructible_v<T, Args&&...>
@@ -97,7 +97,7 @@ namespace aa {
             }
         }
 
-        Maybe(Maybe&&)
+        Maybe(Maybe&&) noexcept
             requires(!std::is_move_constructible_v<T>)
         = delete;
         Maybe(Maybe&&) noexcept
@@ -202,96 +202,70 @@ namespace aa {
 
         template <class... Args>
         constexpr auto emplace(Args&&... args) noexcept(
-            std::is_nothrow_constructible_v<T, Args&&...>)
+            std::is_nothrow_constructible_v<T, Args&&...>) -> T&
         {
             reset();
-            std::construct_at(std::addressof(m_value), std::forward<Args>(args)...);
-            m_has_value = true;
+            T* const ptr = std::construct_at(std::addressof(m_value), std::forward<Args>(args)...);
+            m_has_value  = true;
+            return *ptr;
         }
 
-        // TODO: C++23: Use explicit object parameters instead of macros.
+        template <class Self>
+        [[nodiscard]] constexpr auto value(this Self&& self) noexcept(nothrow_value)
+            -> Qualified_like<Self, T>
+        {
+            Config::validate_value(self.m_has_value);
+            return std::forward_like<Self>(self.m_value);
+        }
 
-#define AA_STL_INTERNAL_HELPER_FOR_ALL_QUALIFIERS() \
-    AA_STL_INTERNAL_HELPER(&)                       \
-    AA_STL_INTERNAL_HELPER(const&)                  \
-    AA_STL_INTERNAL_HELPER(&&)                      \
-    AA_STL_INTERNAL_HELPER(const&&)                 \
-    AA_STL_INTERNAL_HELPER(volatile&)               \
-    AA_STL_INTERNAL_HELPER(volatile const&)         \
-    AA_STL_INTERNAL_HELPER(volatile&&)              \
-    AA_STL_INTERNAL_HELPER(volatile const&&)
+        template <class Self>
+        [[nodiscard]] constexpr auto value_unchecked(this Self&& self) noexcept
+            -> Qualified_like<Self, T>
+        {
+            return std::forward_like<Self>(self.m_value);
+        }
 
-        // value()
+        template <class Self>
+        [[nodiscard]] constexpr auto operator*(this Self&& self) noexcept(nothrow_deref)
+            -> Qualified_like<Self, T>
+        {
+            Config::validate_deref(self.m_has_value);
+            return std::forward_like<Self>(self.m_value);
+        }
 
-#define AA_STL_INTERNAL_HELPER(qualifiers)                                                \
-    [[nodiscard]] constexpr auto value() qualifiers noexcept(nothrow_value)->T qualifiers \
-    {                                                                                     \
-        Config::validate_value(m_has_value);                                              \
-        return static_cast<T qualifiers>(m_value);                                        \
-    }
-        AA_STL_INTERNAL_HELPER_FOR_ALL_QUALIFIERS()
-#undef AA_STL_INTERNAL_HELPER
+        [[nodiscard]] constexpr auto operator->(this auto&& self) noexcept(nothrow_deref)
+        {
+            Config::validate_deref(self.m_has_value);
+            return std::addressof(self.m_value);
+        }
 
-        // operator*()
+        template <class Self, std::invocable<Qualified_like<Self, T>> Function>
+        [[nodiscard]] constexpr auto map(this Self&& self, Function&& function) noexcept(
+            std::is_nothrow_invocable_v<Function&&, Qualified_like<Self, T>>)
+            -> Maybe<std::invoke_result_t<Function&&, Qualified_like<Self, T>>>
+        {
+            if (!self.m_has_value) {
+                return {};
+            }
+            return Maybe<std::invoke_result_t<Function, Qualified_like<Self, T>>>(
+                in_place,
+                std::invoke(
+                    std::forward<Function>(function), std::forward_like<Self>(self.m_value)));
+        }
 
-#define AA_STL_INTERNAL_HELPER(qualifiers)                                                    \
-    [[nodiscard]] constexpr auto operator*() qualifiers noexcept(nothrow_deref)->T qualifiers \
-    {                                                                                         \
-        Config::validate_deref(m_has_value);                                                  \
-        return static_cast<T qualifiers>(m_value);                                            \
-    }
-        AA_STL_INTERNAL_HELPER_FOR_ALL_QUALIFIERS()
-#undef AA_STL_INTERNAL_HELPER
+        template <class Self, std::invocable<Qualified_like<Self, T>> Function>
+        constexpr auto map(this Self&& self, Function&& function) noexcept(
+            std::is_nothrow_invocable_v<Function&&, Qualified_like<Self, T>>) -> void
+            requires std::is_void_v<std::invoke_result_t<Function&&, Qualified_like<Self, T>>>
+        {
+            if (self.m_has_value) {
+                std::invoke(
+                    std::forward<Function>(function), std::forward_like<Self>(self.m_value));
+            }
+        }
 
-        // operator->()
-
-#define AA_STL_INTERNAL_HELPER(qualifiers)                                       \
-    [[nodiscard]] constexpr auto operator->() qualifiers noexcept(nothrow_deref) \
-        ->std::remove_reference_t<T qualifiers>*                                 \
-    {                                                                            \
-        Config::validate_deref(m_has_value);                                     \
-        return std::addressof(m_value);                                          \
-    }
-        AA_STL_INTERNAL_HELPER_FOR_ALL_QUALIFIERS()
-#undef AA_STL_INTERNAL_HELPER
-
-        // map()
-
-#define AA_STL_INTERNAL_HELPER(qualifiers)                                                      \
-    template <std::invocable<T qualifiers> Function>                                            \
-    [[nodiscard]] constexpr auto map(Function&& function)                                       \
-        qualifiers noexcept(std::is_nothrow_invocable_v<Function&&, T qualifiers>)              \
-            ->Maybe<std::invoke_result_t<Function&&, T qualifiers>>                             \
-    {                                                                                           \
-        if (!m_has_value) {                                                                     \
-            return {};                                                                          \
-        }                                                                                       \
-        return Maybe<std::invoke_result_t<Function, T qualifiers>>(                             \
-            in_place,                                                                           \
-            std::invoke(std::forward<Function>(function), static_cast<T qualifiers>(m_value))); \
-    }
-        AA_STL_INTERNAL_HELPER_FOR_ALL_QUALIFIERS()
-#undef AA_STL_INTERNAL_HELPER
-
-        // map() -> void
-
-#define AA_STL_INTERNAL_HELPER(qualifiers)                                                     \
-    template <std::invocable<T qualifiers> Function>                                           \
-    constexpr auto map(Function&& function)                                                    \
-        qualifiers noexcept(std::is_nothrow_invocable_v<Function&&, T qualifiers>)             \
-            ->void                                                                             \
-        requires std::is_void_v<std::invoke_result_t<Function&&, T qualifiers>>                \
-    {                                                                                          \
-        if (m_has_value) {                                                                     \
-            std::invoke(std::forward<Function>(function), static_cast<T qualifiers>(m_value)); \
-        }                                                                                      \
-    }
-        AA_STL_INTERNAL_HELPER_FOR_ALL_QUALIFIERS()
-#undef AA_STL_INTERNAL_HELPER
-
-#undef AA_STL_INTERNAL_HELPER_FOR_ALL_QUALIFIERS
         // NOLINTEND(cppcoreguidelines-pro-type-union-access, bugprone-macro-parentheses)
-    }; // class Maybe
+    };
 
 } // namespace aa
 
