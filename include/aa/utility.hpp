@@ -63,10 +63,6 @@ namespace aa {
     template <class T>
     class Ref {
         T* m_pointer;
-
-        struct Null_construct_tag {};
-
-        explicit constexpr Ref(Null_construct_tag) noexcept : m_pointer { nullptr } {}
     public:
         constexpr Ref(T& reference) noexcept : m_pointer { std::addressof(reference) } {}
 
@@ -95,10 +91,15 @@ namespace aa {
             return *m_pointer;
         }
 
+        // Dangerous escape hatch for special cases, such as sentinel values.
         [[nodiscard]] static constexpr auto unsafe_construct_null_reference() noexcept -> Ref
         {
             return Ref { Null_construct_tag {} };
         }
+    private:
+        struct Null_construct_tag {};
+
+        explicit constexpr Ref(Null_construct_tag) noexcept : m_pointer { nullptr } {}
     };
 
     template <sane T>

@@ -8,7 +8,7 @@ namespace aa::dtl {
 
     template <sane T, class Config>
         requires std::is_same_v<T, decltype(Config::sentinel_value())>
-    struct Maybe_core<T, Config> {
+    struct Maybe_core<T, Config> final {
         T m_value = Config::sentinel_value();
 
         Maybe_core() = default;
@@ -41,7 +41,7 @@ namespace aa::dtl {
 
     template <sane T, class Config>
         requires std::is_void_v<decltype(Config::sentinel_value())>
-    struct Maybe_core<T, Config> {
+    struct Maybe_core<T, Config> final {
         union {
             T m_value;
         };
@@ -230,13 +230,29 @@ namespace aa {
     using Maybe_config_unchecked_deref = Basic_maybe_config<true, false>;
     using Maybe_config_unchecked       = Basic_maybe_config<false, false>;
 
+    template <class>
+    struct Maybe_config_default_for final : Maybe_config_checked {};
+
+    template <class T>
+    struct Maybe_config_default_for<Ref<T>> final : Maybe_config_checked {
+        static constexpr auto sentinel_value() noexcept -> Ref<T>
+        {
+            return Ref<T>::unsafe_construct_null_reference();
+        }
+
+        static constexpr auto is_sentinel_value(Ref<T> const ref) noexcept -> bool
+        {
+            return ref.operator->() == nullptr;
+        }
+    };
+
     struct Nothing final : detail::Internal_tag_type_base {
         explicit consteval Nothing(detail::Internal_construct_tag) {}
     };
 
     inline constexpr Nothing nothing { detail::Internal_construct_tag {} };
 
-    template <sane T, maybe_config<T> Config = Maybe_config_checked>
+    template <sane T, maybe_config<T> Config = Maybe_config_default_for<T>>
     class [[nodiscard]] Maybe final {
         dtl::Maybe_core<T, Config> m_core;
 
