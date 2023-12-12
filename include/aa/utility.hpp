@@ -1,7 +1,9 @@
 #pragma once
 
 #include <type_traits>
+#include <concepts>
 #include <utility>
+#include <memory>
 
 namespace aa::detail {
     struct Internal_tag_type_base {};
@@ -34,6 +36,7 @@ namespace aa {
     template <class T>
     concept sane = requires {
         requires !tag_type<T>;
+        requires !std::is_reference_v<T>;
         requires std::is_nothrow_destructible_v<T>;
         requires std::is_nothrow_move_constructible_v<T> || !std::is_move_constructible_v<T>;
         requires std::is_nothrow_move_assignable_v<T> || !std::is_move_assignable_v<T>;
@@ -51,7 +54,68 @@ namespace aa {
         = std::is_nothrow_move_constructible_v<T>
        && (!std::is_move_assignable_v<T> || std::is_nothrow_move_assignable_v<T>);
 
+    template <class T, class... Ts>
+    concept one_of = std::disjunction_v<std::is_same<T, Ts>...>;
+
     template <class T, class U>
     using Qualified_like = decltype(std::forward_like<T>(std::declval<U&>()));
 
+    template <class T>
+    class Ref {
+        T* m_pointer;
+
+        struct Null_construct_tag {};
+
+        explicit constexpr Ref(Null_construct_tag) noexcept : m_pointer { nullptr } {}
+    public:
+        constexpr Ref(T& reference) noexcept : m_pointer { std::addressof(reference) } {}
+
+        constexpr Ref(Ref<T const> const other) noexcept
+            requires(!std::is_const_v<T>)
+            : m_pointer { other.m_pointer }
+        {}
+
+        [[nodiscard]] constexpr operator T&() const noexcept
+        {
+            return *m_pointer;
+        }
+
+        [[nodiscard]] constexpr auto operator*() const noexcept -> T&
+        {
+            return *m_pointer;
+        }
+
+        [[nodiscard]] constexpr auto operator->() const noexcept -> T*
+        {
+            return m_pointer;
+        }
+
+        [[nodiscard]] constexpr auto get() const noexcept -> T&
+        {
+            return *m_pointer;
+        }
+
+        [[nodiscard]] static constexpr auto unsafe_construct_null_reference() noexcept -> Ref
+        {
+            return Ref { Null_construct_tag {} };
+        }
+    };
+
+    template <sane T>
+    constexpr auto move_assign(T& a, T&& b) noexcept -> void
+        requires(std::is_move_constructible_v<T> || std::is_move_assignable_v<T>)
+    {
+        if constexpr (std::is_move_assignable_v<T>) {
+            a = std::move(b); // NOLINT: bugprone move
+        }
+        else {
+            std::destroy_at(std::addressof(a));
+            std::construct_at(std::addressof(a), std::move(b)); // NOLINT: bugprone move
+        }
+    }
+
 } // namespace aa
+
+namespace aa::inline basics {
+    using aa::Ref;
+}

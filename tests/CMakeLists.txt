@@ -4,6 +4,7 @@ set(executable test-${PROJECT_NAME})
 add_executable(${executable})
 
 target_sources(${executable}
+    PRIVATE utility.test.cpp
     PRIVATE maybe.test.cpp)
 target_link_libraries(${executable}
     PRIVATE ${PROJECT_NAME}

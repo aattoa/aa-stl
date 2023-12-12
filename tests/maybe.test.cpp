@@ -63,7 +63,7 @@ namespace {
     STATIC_TEST("Copy construction", {
         Maybe<Nontrivial> const a { 50 };
         Maybe<Nontrivial>       b { a };
-        ++b.value().integer;
+        ++b.unwrap().integer;
         return (a->integer == 50) && (b->integer == 51);
     });
 
@@ -119,7 +119,8 @@ namespace {
         };
         Maybe<Nontrivial> a { 10 };
         Maybe<Nontrivial> b;
-        return (a.map(square).value() == 3.14) && (a->integer == 100) && (b.map(square).is_empty());
+        return (a.map(square).unwrap() == 3.14) && (a->integer == 100)
+            && (b.map(square).is_empty());
     });
 
     STATIC_TEST("void map const", {
@@ -146,10 +147,10 @@ namespace {
 
     static_assert(requires(Maybe<Nontrivial> m, Maybe<Nontrivial> const c) {
         // clang-format off
-        { m.value() }                 -> std::same_as<Nontrivial&>;
-        { c.value() }                 -> std::same_as<Nontrivial const&>;
-        { std::move(m.value()) }      -> std::same_as<Nontrivial&&>;
-        { std::move(c.value()) }      -> std::same_as<Nontrivial const&&>; // NOLINT: move from const
+        { m.unwrap() }                -> std::same_as<Nontrivial&>;
+        { c.unwrap() }                -> std::same_as<Nontrivial const&>;
+        { std::move(m.unwrap()) }     -> std::same_as<Nontrivial&&>;
+        { std::move(c.unwrap()) }     -> std::same_as<Nontrivial const&&>; // NOLINT: move from const
 
         { *m }                        -> std::same_as<Nontrivial&>;
         { *std::move(m) }             -> std::same_as<Nontrivial&&>;
