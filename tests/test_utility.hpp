@@ -60,8 +60,7 @@ namespace aa::tests {
 } // namespace aa::tests
 
 template <>
-struct aa::Maybe_config_default_for<aa::tests::Nontrivial_with_sentinel> final
-    : Maybe_config_checked {
+struct aa::Sentinel_config_default_for<aa::tests::Nontrivial_with_sentinel> final {
     static constexpr auto sentinel_value() noexcept -> aa::tests::Nontrivial_with_sentinel
     {
         return aa::tests::Nontrivial_with_sentinel { aa::tests::Nontrivial {

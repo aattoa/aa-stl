@@ -11,7 +11,11 @@ namespace aa {
         T value;
     };
 
-    template <sane T, sane E, maybe_config<T> Config = Maybe_config_checked>
+    template <
+        sane          T,
+        sane          E,
+        access_config Unwrap_config = Access_config_checked,
+        access_config Deref_config  = Access_config_checked>
     class [[nodiscard]] Result final {
         union {
             T m_value;
@@ -19,8 +23,8 @@ namespace aa {
         };
         bool m_has_value {};
 
-        static constexpr bool nothrow_unwrap = noexcept(Config::validate_unwrap(bool {}));
-        static constexpr bool nothrow_deref  = noexcept(Config::validate_deref(bool {}));
+        static constexpr bool nothrow_unwrap = noexcept(Unwrap_config::validate_access(bool {}));
+        static constexpr bool nothrow_deref  = noexcept(Deref_config::validate_access(bool {}));
     public:
         constexpr Result() noexcept(std::is_nothrow_default_constructible_v<T>)
             requires std::is_default_constructible_v<T>
@@ -208,14 +212,14 @@ namespace aa {
         [[nodiscard]] constexpr auto operator*(this Self&& self)
             noexcept(nothrow_deref) -> Qualified_like<Self, T>
         {
-            Config::validate_deref(self.m_has_value);
+            Deref_config::validate_access(self.m_has_value);
             return std::forward_like<Self>(self.m_value);
         }
 
         [[nodiscard]] constexpr auto operator->(this auto&& self)
             noexcept(nothrow_deref) -> decltype(std::addressof(self.m_core.m_value))
         {
-            Config::validate_deref(self.m_has_value);
+            Deref_config::validate_access(self.m_has_value);
             return std::addressof(self.m_value);
         }
 
@@ -223,7 +227,7 @@ namespace aa {
         [[nodiscard]] constexpr auto unwrap(this Self&& self)
             noexcept(nothrow_unwrap) -> Qualified_like<Self, T>
         {
-            Config::validate_unwrap(self.m_has_value);
+            Unwrap_config::validate_access(self.m_has_value);
             return std::forward_like<Self>(self.m_value);
         }
 
@@ -238,7 +242,7 @@ namespace aa {
         [[nodiscard]] constexpr auto unwrap_err(this Self&& self)
             noexcept(nothrow_unwrap) -> Qualified_like<Self, E>
         {
-            Config::validate_unwrap(!self.m_has_value);
+            Unwrap_config::validate_access(!self.m_has_value);
             return std::forward_like<Self>(self.m_error);
         }
 
@@ -252,23 +256,25 @@ namespace aa {
         template <class Self>
         [[nodiscard]] constexpr auto val(this Self&& self)
             noexcept(std::is_nothrow_constructible_v<T, Qualified_like<Self, T>>)
-                -> Maybe<T, Config>
+                -> Maybe<T, Unwrap_config, Deref_config>
         {
             if (!self.m_has_value) {
                 return nothing;
             }
-            return Maybe<T, Config>(in_place, std::forward_like<Self>(self.m_value));
+            return Maybe<T, Unwrap_config, Deref_config>(
+                in_place, std::forward_like<Self>(self.m_value));
         }
 
         template <class Self>
         [[nodiscard]] constexpr auto err(this Self&& self)
             noexcept(std::is_nothrow_constructible_v<E, Qualified_like<Self, E>>)
-                -> Maybe<E, Config>
+                -> Maybe<E, Unwrap_config, Deref_config>
         {
             if (self.m_has_value) {
                 return nothing;
             }
-            return Maybe<E, Config>(in_place, std::forward_like<Self>(self.m_error));
+            return Maybe<E, Unwrap_config, Deref_config>(
+                in_place, std::forward_like<Self>(self.m_error));
         }
 
         template <
@@ -277,13 +283,14 @@ namespace aa {
             class R = std::invoke_result_t<Function&&, Qualified_like<Self, T>>>
         [[nodiscard]] constexpr auto map(this Self&& self, Function&& function)
             noexcept(std::is_nothrow_invocable_v<Function&&, Qualified_like<Self, T>>)
-                -> Result<R, E, Config>
+                -> Result<R, E, Unwrap_config, Deref_config>
         {
             if (self.m_has_value) {
-                return Result<R, E, Config> { std::invoke(
+                return Result<R, E, Unwrap_config, Deref_config> { std::invoke(
                     std::forward<Function>(function), std::forward_like<Self>(self.m_value)) };
             }
-            return Result<R, E, Config> { Error<E> { std::forward_like<Self>(self.m_error) } };
+            return Result<R, E, Unwrap_config, Deref_config> { Error<E> {
+                std::forward_like<Self>(self.m_error) } };
         }
 
         template <class Self, std::invocable<Qualified_like<Self, T>> Function>
@@ -303,13 +310,14 @@ namespace aa {
             class R = std::invoke_result_t<Function&&, Qualified_like<Self, E>>>
         [[nodiscard]] constexpr auto map_err(this Self&& self, Function&& function)
             noexcept(std::is_nothrow_invocable_v<Function&&, Qualified_like<Self, E>>)
-                -> Result<T, R, Config>
+                -> Result<T, R, Unwrap_config, Deref_config>
         {
             if (!self.m_has_value) {
-                return Result<T, R, Config> { Error<R> { std::invoke(
+                return Result<T, R, Unwrap_config, Deref_config> { Error<R> { std::invoke(
                     std::forward<Function>(function), std::forward_like<Self>(self.m_error)) } };
             }
-            return Result<T, R, Config> { std::forward_like<Self>(self.m_value) };
+            return Result<T, R, Unwrap_config, Deref_config> { std::forward_like<Self>(
+                self.m_value) };
         }
 
         template <class Self, std::invocable<Qualified_like<Self, E>> Function>
@@ -323,7 +331,8 @@ namespace aa {
             }
         }
 
-        [[nodiscard]] constexpr auto ref() & noexcept -> Result<Ref<T>, Ref<E>>
+        [[nodiscard]] constexpr auto ref() & noexcept
+            -> Result<Ref<T>, Ref<E>, Unwrap_config, Deref_config>
         {
             if (m_has_value) {
                 return Ref { m_value };
@@ -331,7 +340,8 @@ namespace aa {
             return Error { Ref { m_error } };
         }
 
-        [[nodiscard]] constexpr auto ref() const& noexcept -> Result<Ref<T const>, Ref<E const>>
+        [[nodiscard]] constexpr auto ref() const& noexcept
+            -> Result<Ref<T const>, Ref<E const>, Unwrap_config, Deref_config>
         {
             if (m_has_value) {
                 return Ref { m_value };

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <source_location>
 #include <type_traits>
 #include <concepts>
 #include <utility>
@@ -161,6 +162,75 @@ namespace aa {
             reconstruct(to, from);
         }
     }
+
+    struct Bad_access : std::exception {
+        std::source_location source_location;
+
+        Bad_access(std::source_location const location) noexcept : source_location { location } {}
+
+        [[nodiscard]] auto what() const noexcept -> char const* override
+        {
+            return "aa::Bad_access";
+        }
+    };
+
+    template <class Config, class T>
+    concept sentinel_config = requires(T const& value) {
+        {
+            Config::sentinel_value()
+        } -> one_of<T, void>;
+        {
+            Config::is_sentinel_value(value)
+        } noexcept -> std::same_as<bool>;
+    };
+
+    template <class Config>
+    concept access_config = requires(bool const has_value) {
+        {
+            Config::validate_access(has_value)
+        } -> std::same_as<void>;
+    };
+
+    template <bool do_check>
+    struct Basic_access_config {
+        Basic_access_config() = delete;
+        static constexpr auto validate_access(
+            bool const                 has_value,
+            std::source_location const caller = std::source_location::current())
+            noexcept(!do_check) -> void
+        {
+            if constexpr (do_check) {
+                if (!has_value) {
+                    throw Bad_access { caller };
+                }
+            }
+        }
+    };
+
+    struct Access_config_checked   final : Basic_access_config<true> {};
+    struct Access_config_unchecked final : Basic_access_config<false> {};
+
+    template <class T>
+    struct Sentinel_config_default_for final {
+        Sentinel_config_default_for() = delete;
+        // Not implemented
+        static auto sentinel_value() noexcept -> void;
+        // Not implemented
+        static auto is_sentinel_value(T const&) noexcept -> bool;
+    };
+
+    template <class T>
+    struct Sentinel_config_default_for<Ref<T>> final {
+        Sentinel_config_default_for() = delete;
+        static constexpr auto sentinel_value() noexcept -> Ref<T>
+        {
+            return Ref<T>::unsafe_construct_null_reference();
+        }
+        static constexpr auto is_sentinel_value(Ref<T> const ref) noexcept -> bool
+        {
+            return ref.operator->() == nullptr;
+        }
+    };
 
 } // namespace aa
 

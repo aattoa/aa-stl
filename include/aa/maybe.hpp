@@ -3,10 +3,10 @@
 #include <aa/utility.hpp>
 
 namespace aa::dtl {
-    template <sane T, class Config>
+    template <sane T, sentinel_config<T> Config>
     struct Maybe_core;
 
-    template <sane T, class Config>
+    template <sane T, sentinel_config<T> Config>
         requires std::is_same_v<T, decltype(Config::sentinel_value())>
     struct Maybe_core<T, Config> final {
         T m_value = Config::sentinel_value();
@@ -39,7 +39,7 @@ namespace aa::dtl {
         }
     };
 
-    template <sane T, class Config>
+    template <sane T, sentinel_config<T> Config>
         requires std::is_void_v<decltype(Config::sentinel_value())>
     struct Maybe_core<T, Config> final {
         union {
@@ -182,70 +182,21 @@ namespace aa::dtl {
 
 namespace aa {
 
-    struct Bad_maybe_access : std::exception {
-        [[nodiscard]] auto what() const noexcept -> char const* override
-        {
-            return "aa::Bad_maybe_access";
-        }
-    };
-
-    // clang-format off
-
-    template <class Config, class T>
-    concept maybe_config = requires(bool const has_value, T const& value) {
-        { Config::validate_unwrap(has_value) } -> std::same_as<void>;
-        { Config::validate_deref(has_value) }  -> std::same_as<void>;
-        { Config::sentinel_value() }           -> one_of<T, void>;
-        { Config::is_sentinel_value(value) }   -> std::same_as<bool>;
-    };
-
-    template <bool check_value, bool check_deref>
-    struct Basic_maybe_config {
-        Basic_maybe_config() = delete;
-        static constexpr auto validate_unwrap(bool const has_value) noexcept(!check_value) -> void
-        {
-            if constexpr (check_value) if (!has_value) throw Bad_maybe_access {};
-        }
-        static constexpr auto validate_deref(bool const has_value) noexcept(!check_deref) -> void
-        {
-            if constexpr (check_deref) if (!has_value) throw Bad_maybe_access {};
-        }
-        static auto sentinel_value() noexcept -> void;
-        static constexpr auto is_sentinel_value(auto const&) noexcept -> bool { return false; }
-    };
-
-    struct Maybe_config_checked         : Basic_maybe_config<true, true> {};
-    struct Maybe_config_unchecked_deref : Basic_maybe_config<true, false> {};
-    struct Maybe_config_unchecked       : Basic_maybe_config<false, false> {};
-
-    // clang-format on
-
-    template <class>
-    struct Maybe_config_default_for final : Maybe_config_checked {};
-
-    template <class T>
-    struct Maybe_config_default_for<Ref<T>> final : Maybe_config_checked {
-        static constexpr auto sentinel_value() noexcept -> Ref<T>
-        {
-            return Ref<T>::unsafe_construct_null_reference();
-        }
-        static constexpr auto is_sentinel_value(Ref<T> const ref) noexcept -> bool
-        {
-            return ref.operator->() == nullptr;
-        }
-    };
-
     struct Nothing final : detail::Internal_tag_type_base {
         explicit consteval Nothing(detail::Internal_construct_tag) {}
     };
     inline constexpr Nothing nothing { detail::Internal_construct_tag {} };
 
-    template <sane T, maybe_config<T> Config = Maybe_config_default_for<T>>
+    template <
+        sane               T,
+        access_config      Unwrap_config   = Access_config_checked,
+        access_config      Deref_config    = Access_config_checked,
+        sentinel_config<T> Sentinel_config = Sentinel_config_default_for<T>>
     class [[nodiscard]] Maybe final {
-        dtl::Maybe_core<T, Config> m_core;
+        dtl::Maybe_core<T, Sentinel_config> m_core;
 
-        static constexpr bool nothrow_unwrap = noexcept(Config::validate_unwrap(bool {}));
-        static constexpr bool nothrow_deref  = noexcept(Config::validate_deref(bool {}));
+        static constexpr bool nothrow_unwrap = noexcept(Unwrap_config::validate_access(bool {}));
+        static constexpr bool nothrow_deref  = noexcept(Deref_config::validate_access(bool {}));
     public:
         constexpr Maybe(Nothing = nothing) noexcept {} // NOLINT: implicit
 
@@ -296,7 +247,7 @@ namespace aa {
         [[nodiscard]] constexpr auto unwrap(this Self&& self)
             noexcept(nothrow_unwrap) -> Qualified_like<Self, T>
         {
-            Config::validate_unwrap(self.has_value());
+            Unwrap_config::validate_access(self.has_value());
             return std::forward_like<Self>(self.m_core.m_value);
         }
 
@@ -311,26 +262,32 @@ namespace aa {
         [[nodiscard]] constexpr auto operator*(this Self&& self)
             noexcept(nothrow_deref) -> Qualified_like<Self, T>
         {
-            Config::validate_deref(self.has_value());
+            Deref_config::validate_access(self.has_value());
             return std::forward_like<Self>(self.m_core.m_value);
         }
 
         [[nodiscard]] constexpr auto operator->(this auto&& self)
             noexcept(nothrow_deref) -> decltype(std::addressof(self.m_core.m_value))
         {
-            Config::validate_deref(self.has_value());
+            Deref_config::validate_access(self.has_value());
             return std::addressof(self.m_core.m_value);
         }
 
         template <class Self, std::invocable<Qualified_like<Self, T>> Function>
         [[nodiscard]] constexpr auto map(this Self&& self, Function&& function)
             noexcept(std::is_nothrow_invocable_v<Function&&, Qualified_like<Self, T>>)
-                -> Maybe<std::invoke_result_t<Function&&, Qualified_like<Self, T>>>
+                -> Maybe<
+                    std::invoke_result_t<Function&&, Qualified_like<Self, T>>,
+                    Unwrap_config,
+                    Deref_config>
         {
             if (!self.has_value()) {
                 return nothing;
             }
-            return Maybe<std::invoke_result_t<Function, Qualified_like<Self, T>>>(
+            return Maybe<
+                std::invoke_result_t<Function, Qualified_like<Self, T>>,
+                Unwrap_config,
+                Deref_config>(
                 in_place,
                 std::invoke(
                     std::forward<Function>(function),
@@ -348,7 +305,7 @@ namespace aa {
             }
         }
 
-        [[nodiscard]] constexpr auto ref() & noexcept -> Maybe<Ref<T>>
+        [[nodiscard]] constexpr auto ref() & noexcept -> Maybe<Ref<T>, Unwrap_config, Deref_config>
         {
             if (has_value()) {
                 return Ref { m_core.m_value };
@@ -356,7 +313,8 @@ namespace aa {
             return nothing;
         }
 
-        [[nodiscard]] constexpr auto ref() const& noexcept -> Maybe<Ref<T const>>
+        [[nodiscard]] constexpr auto ref() const& noexcept
+            -> Maybe<Ref<T const>, Unwrap_config, Deref_config>
         {
             if (has_value()) {
                 return Ref { m_core.m_value };
