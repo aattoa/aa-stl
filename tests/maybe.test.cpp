@@ -1,77 +1,11 @@
 #include <aa/maybe.hpp>
 #include <string>
-
-#define STATIC_TEST(name, ...) static_assert(([] consteval -> bool __VA_ARGS__)(), name);
-
-namespace {
-
-    struct Nontrivial {
-        int integer;
-
-        constexpr ~Nontrivial() {} // NOLINT: equals default
-
-        explicit constexpr Nontrivial(int const value) : integer(value) {}
-
-        constexpr Nontrivial(Nontrivial const& other) noexcept // NOLINT: equals default
-            : integer(other.integer) {};
-
-        constexpr Nontrivial(Nontrivial&& other) noexcept : integer(std::exchange(other.integer, 0))
-        {}
-
-        constexpr auto operator=(Nontrivial const& other) -> Nontrivial&
-        {
-            if (this != &other) {
-                integer = other.integer;
-            }
-            return *this;
-        };
-
-        constexpr auto operator=(Nontrivial&& other) noexcept -> Nontrivial&
-        {
-            if (this != &other) {
-                integer = std::exchange(other.integer, 0);
-            }
-            return *this;
-        }
-
-        [[nodiscard]] constexpr auto operator==(int const value) const noexcept -> bool
-        {
-            return integer == value;
-        }
-    };
-
-    struct Nontrivial_with_sentinel : Nontrivial {
-        static constexpr int sentinel = 1000;
-    };
-
-    static_assert(
-        !std::is_trivially_default_constructible_v<Nontrivial>
-        && !std::is_trivially_copy_assignable_v<Nontrivial>
-        && !std::is_trivially_copy_constructible_v<Nontrivial>
-        && !std::is_trivially_move_assignable_v<Nontrivial>
-        && !std::is_trivially_move_constructible_v<Nontrivial>
-        && !std::is_trivially_destructible_v<Nontrivial>);
-
-    static_assert(aa::sane<Nontrivial> && aa::sane<Nontrivial_with_sentinel>);
-
-} // namespace
-
-template <>
-struct aa::Maybe_config_default_for<Nontrivial_with_sentinel> final : Maybe_config_checked {
-    static constexpr auto sentinel_value() noexcept -> Nontrivial_with_sentinel
-    {
-        return Nontrivial_with_sentinel { Nontrivial { Nontrivial_with_sentinel::sentinel } };
-    }
-
-    static constexpr auto is_sentinel_value(Nontrivial_with_sentinel const& x) noexcept -> bool
-    {
-        return x.integer == Nontrivial_with_sentinel::sentinel;
-    }
-};
+#include "test_utility.hpp"
 
 namespace {
 
     using namespace aa::basics;
+    using namespace aa::tests;
 
     STATIC_TEST("Non-sentinel default construction", {
         return Maybe<Nontrivial> {}.is_empty() && Maybe<Nontrivial> { nothing }.is_empty();

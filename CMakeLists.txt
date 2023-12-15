@@ -10,7 +10,9 @@ add_library(${PROJECT_NAME} STATIC)
 target_sources(${PROJECT_NAME}
     PRIVATE include/aa/utility.hpp
     PRIVATE include/aa/utility.cpp
-    PRIVATE include/aa/maybe.hpp)
+    PRIVATE include/aa/result.hpp
+    PRIVATE include/aa/maybe.hpp
+    PRIVATE include/aa/meta.hpp)
 target_include_directories(${PROJECT_NAME}
     PUBLIC include)
 

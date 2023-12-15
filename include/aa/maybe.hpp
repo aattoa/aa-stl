@@ -3,7 +3,7 @@
 #include <aa/utility.hpp>
 
 namespace aa::dtl {
-    template <sane, class>
+    template <sane T, class Config>
     struct Maybe_core;
 
     template <sane T, class Config>
@@ -45,7 +45,6 @@ namespace aa::dtl {
         union {
             T m_value;
         };
-
         bool m_has_value = false;
 
         constexpr Maybe_core() noexcept {}
@@ -190,28 +189,19 @@ namespace aa {
         }
     };
 
+    // clang-format off
+
     template <class Config, class T>
     concept maybe_config = requires(bool const has_value, T const& value) {
-        {
-            Config::validate_unwrap(has_value)
-        } -> std::same_as<void>;
-        {
-            Config::validate_deref(has_value)
-        } -> std::same_as<void>;
-        {
-            Config::sentinel_value()
-        } -> one_of<T, void>;
-        {
-            Config::is_sentinel_value(value)
-        } -> std::same_as<bool>;
+        { Config::validate_unwrap(has_value) } -> std::same_as<void>;
+        { Config::validate_deref(has_value) }  -> std::same_as<void>;
+        { Config::sentinel_value() }           -> one_of<T, void>;
+        { Config::is_sentinel_value(value) }   -> std::same_as<bool>;
     };
-
-    // clang-format off
 
     template <bool check_value, bool check_deref>
     struct Basic_maybe_config {
         Basic_maybe_config() = delete;
-
         static constexpr auto validate_unwrap(bool const has_value) noexcept(!check_value) -> void
         {
             if constexpr (check_value) if (!has_value) throw Bad_maybe_access {};
@@ -224,11 +214,11 @@ namespace aa {
         static constexpr auto is_sentinel_value(auto const&) noexcept -> bool { return false; }
     };
 
-    // clang-format on
+    struct Maybe_config_checked         : Basic_maybe_config<true, true> {};
+    struct Maybe_config_unchecked_deref : Basic_maybe_config<true, false> {};
+    struct Maybe_config_unchecked       : Basic_maybe_config<false, false> {};
 
-    using Maybe_config_checked         = Basic_maybe_config<true, true>;
-    using Maybe_config_unchecked_deref = Basic_maybe_config<true, false>;
-    using Maybe_config_unchecked       = Basic_maybe_config<false, false>;
+    // clang-format on
 
     template <class>
     struct Maybe_config_default_for final : Maybe_config_checked {};
@@ -239,7 +229,6 @@ namespace aa {
         {
             return Ref<T>::unsafe_construct_null_reference();
         }
-
         static constexpr auto is_sentinel_value(Ref<T> const ref) noexcept -> bool
         {
             return ref.operator->() == nullptr;
@@ -249,15 +238,14 @@ namespace aa {
     struct Nothing final : detail::Internal_tag_type_base {
         explicit consteval Nothing(detail::Internal_construct_tag) {}
     };
-
     inline constexpr Nothing nothing { detail::Internal_construct_tag {} };
 
     template <sane T, maybe_config<T> Config = Maybe_config_default_for<T>>
     class [[nodiscard]] Maybe final {
         dtl::Maybe_core<T, Config> m_core;
 
-        static constexpr bool nothrow_value = noexcept(Config::validate_unwrap(bool {}));
-        static constexpr bool nothrow_deref = noexcept(Config::validate_deref(bool {}));
+        static constexpr bool nothrow_unwrap = noexcept(Config::validate_unwrap(bool {}));
+        static constexpr bool nothrow_deref  = noexcept(Config::validate_deref(bool {}));
     public:
         constexpr Maybe(Nothing = nothing) noexcept {} // NOLINT: implicit
 
@@ -306,7 +294,7 @@ namespace aa {
 
         template <class Self>
         [[nodiscard]] constexpr auto unwrap(this Self&& self)
-            noexcept(nothrow_value) -> Qualified_like<Self, T>
+            noexcept(nothrow_unwrap) -> Qualified_like<Self, T>
         {
             Config::validate_unwrap(self.has_value());
             return std::forward_like<Self>(self.m_core.m_value);
@@ -327,7 +315,8 @@ namespace aa {
             return std::forward_like<Self>(self.m_core.m_value);
         }
 
-        [[nodiscard]] constexpr auto operator->(this auto&& self) noexcept(nothrow_deref)
+        [[nodiscard]] constexpr auto operator->(this auto&& self)
+            noexcept(nothrow_deref) -> decltype(std::addressof(self.m_core.m_value))
         {
             Config::validate_deref(self.has_value());
             return std::addressof(self.m_core.m_value);
@@ -339,7 +328,7 @@ namespace aa {
                 -> Maybe<std::invoke_result_t<Function&&, Qualified_like<Self, T>>>
         {
             if (!self.has_value()) {
-                return {};
+                return nothing;
             }
             return Maybe<std::invoke_result_t<Function, Qualified_like<Self, T>>>(
                 in_place,
@@ -359,12 +348,24 @@ namespace aa {
             }
         }
 
-        template <class Self>
-        constexpr auto ref(this Self&& self)
-            requires std::is_lvalue_reference_v<Self>
+        [[nodiscard]] constexpr auto ref() & noexcept -> Maybe<Ref<T>>
         {
-            return self.map([](auto& ref) { return Ref { ref }; });
+            if (has_value()) {
+                return Ref { m_core.m_value };
+            }
+            return nothing;
         }
+
+        [[nodiscard]] constexpr auto ref() const& noexcept -> Maybe<Ref<T const>>
+        {
+            if (has_value()) {
+                return Ref { m_core.m_value };
+            }
+            return nothing;
+        }
+
+        auto ref() &&      = delete;
+        auto ref() const&& = delete;
     };
 
 } // namespace aa
